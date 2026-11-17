@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  EMPTY_STATUS, filterGuests, findByCode, localApply, normCard, shapeGuests, shortDept, stage, todayStr, waLink, DEFAULT_FILTERS,
+  EMPTY_STATUS, filterGuests, localApply, normCard, shapeGuests, shortDept, stage, todayStr, waLink, DEFAULT_FILTERS,
 } from '../src/lib/guests.js';
 
 const row = (o = {}) => {
@@ -107,17 +107,6 @@ describe('filterGuests', () => {
     expect(f({ card: 'Official Invitee' })).toEqual(['a', 'b', 'c']);
     expect(f({ issue: 'labelFix' })).toEqual(['c']);
     expect(f({ st: 'new' })).toEqual(['b']);
-  });
-});
-
-describe('findByCode', () => {
-  const { guests } = shapeGuests([row({ key: 'a', uid: '4614', email: 'asha@x.com' }), row({ key: 'b', uid: '46145' })]);
-  it('matches exact User ID, IDs inside QR text and emails', () => {
-    expect(findByCode(guests, '4614').map((g) => g.key)).toEqual(['a']);
-    expect(findByCode(guests, 'IFFI2026|ID:46145|x').map((g) => g.key)).toEqual(['b']);
-    expect(findByCode(guests, 'mailto:ASHA@x.com').map((g) => g.key)).toEqual(['a']);
-    expect(findByCode(guests, '')).toEqual([]);
-    expect(findByCode(guests, '999')).toEqual([]);
   });
 });
 

@@ -129,17 +129,20 @@ test('offline: marks are kept on the phone and synced when back online', async (
   await expect(page.getByText(/^Live$/)).toBeVisible();
 });
 
-test('quick hand-over scan delivers once and warns on a second scan', async ({ page, request }) => {
+test('hand-over desk: search, hand over once, warns when already collected', async ({ page, request }) => {
   const { row, uid } = await freshRow(request);
   await login(page);
-  await page.getByRole('navigation').getByRole('button', { name: 'Scan' }).click();
-  await page.getByRole('button', { name: 'Quick hand-over' }).click();
-  await page.getByPlaceholder('Type User ID').fill(uid);
-  await page.getByRole('button', { name: 'Find' }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Hand over' }).click();
+  const search = page.getByPlaceholder('Guest name, phone, email or User ID');
+  await search.fill(uid);
+  await page.getByRole('button', { name: 'Not printed yet · hand over anyway' }).click();
+  await page.locator('main').getByRole('button', { name: 'Hand over', exact: true }).click();
   await expect(page.getByText('delivered ✓')).toBeVisible();
+  await expect(search).toHaveValue('');
   await expect.poll(() => cellOf(request, row, 'Delivered')).toBe(today());
-  await page.getByRole('button', { name: 'Find' }).click();
-  await expect(page.getByText(/already collected/)).toBeVisible();
+  await search.fill(uid);
+  await expect(page.getByText(/Already collected/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Hand over card' })).toHaveCount(0);
 });
 
 test('bulk select → Printed asks to confirm and writes every row', async ({ page, request }) => {

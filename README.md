@@ -12,22 +12,22 @@ Realtime, phone-first app for the IFFI accreditation desk. It tracks every guest
 | **Dashboard** | Registered · with User ID · to print · printed · delivered · waiting for ID. **Today**: new registrations, cards printed, cards delivered. Progress per department. **Data checks**: missing/duplicate IDs, duplicate emails, missing photos, card-type typos, flagged rows. Tap any number to open the list. |
 | **Guests** | Search by name, phone, email or User ID. Filter by stage, department, card type, data problem or "New today". Bulk-mark printed/delivered. Export a selection to a new tab for the print vendor. |
 | **Guest card** | Photo, one-tap **Mark printed** / **Hand over**, undo, call / WhatsApp ("your card is ready") / email, who did it and when (or the Sheet2 value if typed by hand), team note. |
-| **Scan** | Camera QR/barcode, photo of a QR, or typed ID. **Quick hand-over** delivers on scan and warns if the card was already collected (and who handed it over). |
+| **Hand over** | The desk counter. Search the guest who walked up (name, phone, email or User ID) and hand over the card in one tap. Warns if the card was already collected (when and by whom) or isn’t printed yet. Shows cards waiting for collection and everything handed over today. |
 | **Activity** | Live feed: *Desk actions* (who printed/delivered what) and *Sheet2 changes* (new registrations, IDs assigned, edits, removals, automatic restores). |
 
 Also: works offline (changes are queued on the phone and synced later), installable to the home screen, team PIN, staff names on every action, and protection against formula injection.
 
 ## Tech
-React 19 · Vite · Tailwind CSS v4 · lucide-react · html5-qrcode · Google Apps Script backend (free, runs on your Google account) · Vitest + Playwright tests · a local Apps Script emulator.
+React 19 · Vite · Tailwind CSS v4 · lucide-react · Google Apps Script backend (free, runs on your Google account) · Vitest + Playwright tests · a local Apps Script emulator.
 
 ```
 apps-script/GuestDesk.gs   backend: reads/writes Sheet2, change tracking, audit log, JSON API
 apps-script/appsscript.json
 src/lib/api.js             backend bridge: gas | http | demo
-src/lib/guests.js          stages, card-type normalising, data checks, search, scan matching
+src/lib/guests.js          stages, card-type normalising, data checks, search
 src/lib/mock.js            demo backend (fake data + simulated colleague + simulated sync)
 src/state/DeskContext.jsx  live state: polling, optimistic updates + undo, offline queue
-src/components/            Dashboard, GuestList, GuestSheet, Scanner, Activity, Login, Header, TabBar, Toast, ui
+src/components/            Dashboard, GuestList, GuestSheet, HandOver, Activity, Login, Header, TabBar, Toast, ui
 emulator/                  Apps Script runtime in Node + local server (runs the real GuestDesk.gs)
 tests/                     unit, backend and contract tests (Vitest)
 e2e/                       end-to-end phone tests (Playwright)
@@ -90,7 +90,7 @@ In Apps Script: **+ → HTML** named exactly `Index` → paste the whole file �
 ## Testing
 
 ```bash
-npm test                    # 75 unit + backend + contract tests (no setup needed)
+npm test                    # 74 unit + backend + contract tests (no setup needed)
 npm run test:e2e            # 9 end-to-end tests: real build + real backend in the emulator, phone-sized browser
 npm run check               # tests + both production builds
 
@@ -101,9 +101,9 @@ First-time e2e needs a browser: `npx playwright install chromium` (or set `CHROM
 
 **What's covered:**
 - **Backend:** setup is idempotent; PIN; columns found by header in any order; dates in Printed and "Deleverd" in Remark understood; unique keys for duplicate rows; printed/delivered/undo write the right cells and only those; bulk updates on scattered rows; notes; hand edits in Sheet2 detected and logged; new rows; User ID assigned; field edits with before → after; removed rows; re-sorted rows keep status; re-sync wipe restored; half-written sheet ignored; activity filters; export; HTTP routing and errors; scan throttling; no false changes on re-scan.
-- **Frontend:** every card-type spelling in the real data, data checks, search, filters, scan matching, WhatsApp numbers, IST dates.
+- **Frontend:** every card-type spelling in the real data, data checks, search, filters, WhatsApp numbers, IST dates.
 - **Contract:** the app's instant (optimistic) updates match what the server returns, for every action.
-- **End-to-end:** login, dashboard totals = Sheet2, hand-over + undo, hand edit in Sheet2 appears in the app, new registration appears, two phones in sync, offline queue, quick hand-over + duplicate warning, bulk with confirm, data checks.
+- **End-to-end:** login, dashboard totals = Sheet2, hand-over + undo, hand edit in Sheet2 appears in the app, new registration appears, two phones in sync, offline queue, hand-over desk + already-collected warning, bulk with confirm, data checks.
 
 ## How "realtime" works
 Each phone asks for two version stamps every 4 s. **Status changed** → fetch statuses only. **Sheet2 data changed** → fetch everything. The backend re-scans Sheet2 at most every 8 s (shared across all phones) and every minute in the background. All writes run under a script lock, so several desks can mark cards at the same moment.

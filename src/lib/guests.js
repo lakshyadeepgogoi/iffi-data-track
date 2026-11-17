@@ -139,20 +139,6 @@ export function filterGuests(guests, status, f) {
   });
 }
 
-/** Finds guests from scanned QR / barcode text or a typed User ID. */
-export function findByCode(guests, code) {
-  const c = String(code).trim();
-  if (!c) return [];
-  const tokens = [c, ...(c.match(/\d{3,}/g) || [])];
-  for (const t of tokens) {
-    const hit = guests.filter((g) => g.uid && g.uid === t);
-    if (hit.length) return hit;
-  }
-  const emails = (c.toLowerCase().match(/[^\s:;,<>"'|]+@[^\s:;,<>"'|]+\.[a-z]{2,}/g) || []);
-  if (!emails.length) return [];
-  return guests.filter((g) => g.email && emails.includes(g.email.toLowerCase()));
-}
-
 export function waLink(g) {
   const d = g.digits;
   if (d.length < 10) return '';

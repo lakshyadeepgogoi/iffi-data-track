@@ -3,6 +3,7 @@ import { LogOut } from 'lucide-react';
 import { useDesk } from '../state/DeskContext.jsx';
 import { cn } from '../lib/utils.js';
 import { ConfirmDialog } from './ui.jsx';
+import logo from '../assets/iffi-logo.png';
 
 export default function Header() {
   const { auth, live, queueLen, logout } = useDesk();
@@ -12,6 +13,9 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-20 bg-brand pt-[env(safe-area-inset-top)] text-white">
       <div className="mx-auto flex max-w-3xl items-center gap-2.5 px-3.5 py-2.5">
+        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-white p-0.5">
+          <img src={logo} alt="IFFI" className="size-full object-contain" />
+        </span>
         <h1 className="flex-1 text-[17px] leading-tight font-bold">
           IFFI Guest Desk
           <small className="block text-[11.5px] font-medium opacity-80">{auth?.name}</small>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { useState } from 'react';
 import { useDesk } from './state/DeskContext.jsx';
 import { MODE } from './lib/api.js';
 import { DEFAULT_FILTERS } from './lib/guests.js';
@@ -9,11 +9,9 @@ import Dashboard from './components/Dashboard.jsx';
 import GuestList from './components/GuestList.jsx';
 import GuestSheet from './components/GuestSheet.jsx';
 import Activity from './components/Activity.jsx';
+import HandOver from './components/HandOver.jsx';
 import Toast from './components/Toast.jsx';
 import { Spinner } from './components/ui.jsx';
-
-// Camera/QR library is large — load it only when the Scan tab opens.
-const Scanner = lazy(() => import('./components/Scanner.jsx'));
 
 export default function App() {
   const { phase } = useDesk();
@@ -38,11 +36,7 @@ export default function App() {
       <main className="mx-auto max-w-3xl px-3 pt-3 pb-32">
         {view === 'home' && <Dashboard onFilter={showGuests} />}
         {view === 'guests' && <GuestList filters={filters} setFilters={setFilters} onOpen={setOpenKey} />}
-        {view === 'scan' && (
-          <Suspense fallback={<Spinner />}>
-            <Scanner onOpen={setOpenKey} onSearch={(q) => showGuests({ q })} />
-          </Suspense>
-        )}
+        {view === 'hand' && <HandOver onOpen={setOpenKey} />}
         {view === 'log' && <Activity onOpen={setOpenKey} />}
       </main>
       <TabBar view={view} onChange={go} />

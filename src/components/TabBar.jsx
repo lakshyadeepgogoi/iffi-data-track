@@ -1,10 +1,10 @@
-import { History, LayoutDashboard, ScanLine, Users } from 'lucide-react';
+import { HandHelping, History, LayoutDashboard, Users } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 
 const TABS = [
   ['home', 'Dashboard', LayoutDashboard],
   ['guests', 'Guests', Users],
-  ['scan', 'Scan', ScanLine],
+  ['hand', 'Hand over', HandHelping],
   ['log', 'Activity', History],
 ];
 
@@ -20,7 +20,7 @@ export default function TabBar({ view, onChange }) {
               onClick={() => onChange(id)}
               className={cn('flex flex-1 flex-col items-center gap-0.5 pt-2 pb-2.5 text-[11.5px] font-semibold', on ? 'text-brand' : 'text-mute')}
             >
-              {id === 'scan' ? (
+              {id === 'hand' ? (
                 <span className="-mt-0.5 rounded-2xl bg-brand px-3.5 py-1.5 text-white"><Icon size={22} /></span>
               ) : (
                 <Icon size={23} strokeWidth={on ? 2.4 : 2} />
