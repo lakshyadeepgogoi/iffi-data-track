@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-gas
+dist-e2e
+test-results
+playwright-report
+.env
+.env.local
+*.xlsx
