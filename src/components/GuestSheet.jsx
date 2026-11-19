@@ -23,6 +23,14 @@ export default function GuestSheet({ guestKey, onClose }) {
   // Close when the guest disappears after a re-sync.
   useEffect(() => { if (guestKey && !byKey[guestKey]) onClose(); }, [guestKey, byKey, onClose]);
 
+  // Esc closes it (laptops).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   return (
     <>
       <div onClick={onClose} className={cn('fixed inset-0 z-40 bg-[#14100c]/45 transition-opacity', open ? 'opacity-100' : 'pointer-events-none opacity-0')} />
@@ -31,10 +39,15 @@ export default function GuestSheet({ guestKey, onClose }) {
         aria-hidden={!open}
         role="dialog"
         aria-label={g ? g.name : 'Guest'}
-        className={cn('fixed inset-x-0 bottom-0 z-[41] flex justify-center transition-transform duration-250 ease-out', open ? 'translate-y-0' : 'translate-y-[105%]')}
+        className={cn(
+          // Phone: bottom sheet. Laptop: drawer from the right, so the list stays visible.
+          'fixed inset-x-0 bottom-0 z-[41] flex justify-center transition-transform duration-250 ease-out',
+          'lg:inset-y-0 lg:right-0 lg:left-auto lg:w-[480px]',
+          open ? 'translate-y-0 lg:translate-x-0' : 'translate-y-[105%] lg:translate-x-[105%] lg:translate-y-0',
+        )}
       >
-        <div className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-t-3xl bg-white px-4 pt-2 pb-[calc(18px+env(safe-area-inset-bottom))]">
-          <div className="mx-auto mt-1 mb-2.5 h-[5px] w-10 rounded-full bg-[#ddd5ca]" />
+        <div className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-t-3xl bg-white px-4 pt-2 pb-[calc(18px+env(safe-area-inset-bottom))] lg:h-full lg:max-h-none lg:rounded-l-3xl lg:rounded-tr-none lg:px-6 lg:pt-6 lg:shadow-2xl">
+          <div className="mx-auto mt-1 mb-2.5 h-[5px] w-10 rounded-full bg-[#ddd5ca] lg:hidden" />
           {g && <Body g={g} status={status} setStatus={setStatus} note={note} setNote={setNote} saveNote={saveNote} onClose={onClose} />}
         </div>
       </div>

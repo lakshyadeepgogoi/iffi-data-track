@@ -15,6 +15,8 @@ Realtime, phone-first app for the IFFI accreditation desk. It tracks every guest
 | **Hand over** | The desk counter. Search the guest who walked up (name, phone, email or User ID) and hand over the card in one tap. Warns if the card was already collected (when and by whom) or isn’t printed yet. Shows cards waiting for collection and everything handed over today. |
 | **Activity** | Live feed: *Desk actions* (who printed/delivered what) and *Sheet2 changes* (new registrations, IDs assigned, edits, removals, automatic restores). |
 
+Works on phones and laptops: on wide screens the tabs move into the header, the dashboard uses two columns, the guest list shows card type / mobile / Sheet2 row columns, and a guest opens in a side drawer (Esc closes it).
+
 Also: works offline (changes are queued on the phone and synced later), installable to the home screen, team PIN, staff names on every action, and protection against formula injection.
 
 ## Tech

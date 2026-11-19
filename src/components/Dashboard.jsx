@@ -38,15 +38,18 @@ export default function Dashboard({ onFilter }) {
 
   return (
     <section>
-      <div className="mb-3 grid grid-cols-3 gap-2">
+      <div className="mb-3 grid grid-cols-3 gap-2 lg:mb-4 lg:grid-cols-6 lg:gap-3">
         {kpis.map(([st, n, label, color]) => (
-          <button key={st} onClick={() => onFilter({ st })} className="rounded-xl bg-white px-3 py-2.5 text-left shadow-card active:scale-[.98]">
-            <b className={cn('block text-[23px] leading-tight tabular-nums', color)}>{n}</b>
-            <span className="text-[11.5px] leading-tight font-semibold text-mute">{label}</span>
+          <button key={st} onClick={() => onFilter({ st })} className="rounded-xl bg-white px-3 py-2.5 text-left shadow-card transition-shadow active:scale-[.98] lg:px-4 lg:py-3.5 lg:hover:shadow-lg">
+            <b className={cn('block text-[23px] leading-tight tabular-nums lg:text-[28px]', color)}>{n}</b>
+            <span className="text-[11.5px] leading-tight font-semibold text-mute lg:text-xs">{label}</span>
           </button>
         ))}
       </div>
 
+      {/* Laptop: two columns. Phone: one column, same order. */}
+      <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-4">
+      <div>
       <Card title="Today">
         <div className="grid grid-cols-3 gap-2 text-center">
           <TodayStat n={today.fresh} label="New registrations" onClick={() => onFilter({ st: 'new' })} />
@@ -80,7 +83,9 @@ export default function Dashboard({ onFilter }) {
           </button>
         ))}
       </Card>
+      </div>
 
+      <div>
       <Card title="Data checks">
         {Object.entries(ISSUES).map(([k, [t, sub]], i) => (
           <button key={k} onClick={() => onFilter({ issue: k })} className={cn('flex w-full items-center justify-between gap-3 py-2.5 text-left', i && 'border-t border-line')}>
@@ -94,6 +99,8 @@ export default function Dashboard({ onFilter }) {
           </button>
         ))}
       </Card>
+      </div>
+      </div>
 
       <p className="text-center text-xs text-mute">Updated {ago(lastOk)} · {guests.length} guests tracked live from Sheet2</p>
     </section>

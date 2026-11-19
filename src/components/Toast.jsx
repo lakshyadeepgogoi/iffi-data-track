@@ -12,7 +12,7 @@ export default function Toast() {
   return (
     <div
       className={cn(
-        'fixed bottom-24 left-1/2 z-[60] flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl bg-ink px-3.5 py-2.5 text-sm font-semibold text-white shadow-xl transition-all duration-200',
+        'fixed bottom-24 left-1/2 lg:bottom-8 z-[60] flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl bg-ink px-3.5 py-2.5 text-sm font-semibold text-white shadow-xl transition-all duration-200',
         toast ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-5 opacity-0',
       )}
       role="status"

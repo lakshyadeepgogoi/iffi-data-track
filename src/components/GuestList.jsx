@@ -68,7 +68,7 @@ export default function GuestList({ filters: f, setFilters, onOpen }) {
 
   return (
     <section>
-      <div className="sticky top-[58px] z-10 -mx-3 bg-paper px-3 pt-0.5 pb-2">
+      <div className="sticky top-[58px] z-10 -mx-3 bg-paper px-3 pt-0.5 pb-2 lg:-mx-6 lg:px-6 lg:pt-2">
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 shadow-card">
           <Search size={18} className="text-mute" />
           <input
@@ -92,7 +92,7 @@ export default function GuestList({ filters: f, setFilters, onOpen }) {
             </button>
           ))}
         </div>
-        <div className="mt-1.5 flex gap-1.5">
+        <div className="mt-1.5 flex gap-1.5 lg:max-w-3xl">
           <select className={select} value={f.dept} onChange={(e) => set({ dept: e.target.value })}>
             <option value="">All departments</option>
             {depts.map((d) => <option key={d} value={d}>{shortDept(d)}</option>)}
@@ -116,6 +116,17 @@ export default function GuestList({ filters: f, setFilters, onOpen }) {
       </div>
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-card">
+        {list.length > 0 && (
+          <div aria-hidden="true" className="hidden items-center gap-3 border-b border-line bg-sand/60 px-4 py-2 text-[11.5px] font-bold tracking-wider text-mute uppercase lg:flex">
+            {selMode && <span className="w-[22px]" />}
+            <span className="w-10" />
+            <span className="flex-1">Guest</span>
+            <span className="w-44">Card type</span>
+            <span className="w-36">Mobile</span>
+            <span className="w-20">Sheet2</span>
+            <span className="w-24 text-right">Status</span>
+          </div>
+        )}
         {!list.length && <div className="px-4 py-8 text-center text-mute">No guests match.</div>}
         {list.slice(0, limit).map((g, i) => {
           const sg = stage(g, status);
@@ -123,7 +134,7 @@ export default function GuestList({ filters: f, setFilters, onOpen }) {
             <button
               key={g.key}
               onClick={() => (selMode ? toggle(g.key) : onOpen(g.key))}
-              className={cn('flex w-full items-center gap-3 px-3 py-2.5 text-left active:bg-[#faf7f2]', i && 'border-t border-line')}
+              className={cn('flex w-full items-center gap-3 px-3 py-2.5 text-left active:bg-[#faf7f2] lg:px-4 lg:hover:bg-[#faf7f2]', i && 'border-t border-line')}
             >
               {selMode && (
                 <span className={cn('grid size-[22px] flex-none place-items-center rounded-[7px] border-2 text-white', sel.has(g.key) ? 'border-brand bg-brand' : 'border-[#cfc8bd]')}>
@@ -138,7 +149,10 @@ export default function GuestList({ filters: f, setFilters, onOpen }) {
                   {g.issues.length > 0 && sg !== 'noid' && <span className="font-bold text-bad"> · ⚠</span>}
                 </div>
               </span>
-              <Pill stage={sg} />
+              <span className={cn('hidden w-44 truncate text-[13px] lg:block', g.cardFlag ? 'text-bad' : 'text-ink/80')}>{g.card}</span>
+              <span className="hidden w-36 truncate text-[13px] text-mute tabular-nums lg:block">{g.mobile || '—'}</span>
+              <span className="hidden w-20 text-[13px] text-mute tabular-nums lg:block">Row {g.row}</span>
+              <span className="lg:flex lg:w-24 lg:justify-end"><Pill stage={sg} /></span>
             </button>
           );
         })}
@@ -150,7 +164,7 @@ export default function GuestList({ filters: f, setFilters, onOpen }) {
       </div>
 
       {selMode && (
-        <div className="fixed inset-x-0 bottom-[66px] z-25 flex justify-center px-2.5 pb-[env(safe-area-inset-bottom)]">
+        <div className="fixed inset-x-0 bottom-[66px] z-25 flex justify-center px-2.5 pb-[env(safe-area-inset-bottom)] lg:bottom-6">
           <div className="flex w-full max-w-[740px] flex-wrap items-center gap-1.5 rounded-2xl bg-ink p-2.5 text-white shadow-2xl">
             <div className="min-w-[90px] flex-1 pl-1 font-bold">{sel.size} selected</div>
             <BulkBtn onClick={selectAll}>{allOn ? 'None' : 'All'}</BulkBtn>

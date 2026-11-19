@@ -1,7 +1,7 @@
 import { HandHelping, History, LayoutDashboard, Users } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 
-const TABS = [
+export const TABS = [
   ['home', 'Dashboard', LayoutDashboard],
   ['guests', 'Guests', Users],
   ['hand', 'Hand over', HandHelping],
@@ -10,7 +10,7 @@ const TABS = [
 
 export default function TabBar({ view, onChange }) {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white pb-[env(safe-area-inset-bottom)]">
+    <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white pb-[env(safe-area-inset-bottom)] lg:hidden">
       <div className="mx-auto flex max-w-3xl">
         {TABS.map(([id, label, Icon]) => {
           const on = view === id;

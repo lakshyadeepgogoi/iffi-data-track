@@ -32,8 +32,8 @@ export default function App() {
           DEMO MODE — fake data · PIN 2026 · a simulated colleague makes changes every few seconds
         </div>
       )}
-      <Header />
-      <main className="mx-auto max-w-3xl px-3 pt-3 pb-32">
+      <Header view={view} onChange={go} />
+      <main className="mx-auto max-w-3xl px-3 pt-3 pb-32 lg:max-w-6xl lg:px-6 lg:pt-5 lg:pb-12">
         {view === 'home' && <Dashboard onFilter={showGuests} />}
         {view === 'guests' && <GuestList filters={filters} setFilters={setFilters} onOpen={setOpenKey} />}
         {view === 'hand' && <HandOver onOpen={setOpenKey} />}

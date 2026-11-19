@@ -44,7 +44,7 @@ export default function HandOver({ onOpen }) {
 
   return (
     <section>
-      <div className="sticky top-[58px] z-10 -mx-3 bg-paper px-3 pt-0.5 pb-2">
+      <div className="sticky top-[58px] z-10 -mx-3 bg-paper px-3 pt-0.5 pb-2 lg:-mx-6 lg:px-6 lg:pt-2">
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 shadow-card">
           <Search size={18} className="text-mute" />
           <input
@@ -62,8 +62,8 @@ export default function HandOver({ onOpen }) {
       </div>
 
       {q.trim().length >= 2 ? (
-        <div className="space-y-2">
-          {!hits.length && <Card className="py-8 text-center text-mute">No guest matches “{q}”.</Card>}
+        <div className="space-y-2 lg:grid lg:grid-cols-2 lg:items-start lg:gap-3 lg:space-y-0">
+          {!hits.length && <Card className="py-8 text-center text-mute lg:col-span-2">No guest matches “{q}”.</Card>}
           {hits.slice(0, MAX).map((g) => {
             const sg = stage(g, status);
             const s = getSt(status, g.key);
@@ -96,11 +96,11 @@ export default function HandOver({ onOpen }) {
               </div>
             );
           })}
-          {hits.length > MAX && <p className="text-center text-[12.5px] text-mute">{hits.length - MAX} more. Type more of the name or number.</p>}
+          {hits.length > MAX && <p className="text-center text-[12.5px] text-mute lg:col-span-2">{hits.length - MAX} more. Type more of the name or number.</p>}
         </div>
       ) : (
-        <>
-          <div className="mb-3 grid grid-cols-2 gap-2">
+        <div className="lg:grid lg:grid-cols-[280px_1fr] lg:items-start lg:gap-4">
+          <div className="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-1 lg:gap-3">
             <Stat n={waiting} label="Printed, waiting for guest" className="text-pri" />
             <Stat n={today.length} label="Handed over today" className="text-del" />
           </div>
@@ -119,7 +119,7 @@ export default function HandOver({ onOpen }) {
               </button>
             ))}
           </Card>
-        </>
+        </div>
       )}
 
       <ConfirmDialog open={!!confirm} {...confirm} onCancel={() => setConfirm(null)} />

@@ -29,5 +29,8 @@
   button { cursor: pointer; }
 }
 
+/* Desktop Chrome adds its own clear ✕ to search boxes; the app has one already. */
+input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
