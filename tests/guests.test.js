@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  EMPTY_STATUS, filterGuests, localApply, normCard, shapeGuests, shortDept, stage, todayStr, waLink, DEFAULT_FILTERS,
+  EMPTY_STATUS, filterGuests, isDateLike, localApply, normCard, shapeGuests, shortDept, stage, todayStr, waLink, DEFAULT_FILTERS,
 } from '../src/lib/guests.js';
 
 const row = (o = {}) => {
   const d = { key: 'k', row: 2, dept: 'CMOT Guest', first: 'Asha', last: 'Rao', desig: '', email: 'a@x.com', mobile: '9876543210',
-    photo: 'p1234567890', uid: '4614', accr: 'Official Invitee', remark: '', firstSeen: 0, ...o };
-  return [d.key, d.row, d.dept, d.first, d.last, d.desig, d.email, d.mobile, d.photo, d.uid, d.accr, d.remark, d.firstSeen];
+    photo: 'p1234567890', uid: '4614', accr: 'Official Invitee', remark: '', firstSeen: 0, printed: '', delivered: '', ...o };
+  return [d.key, d.row, d.dept, d.first, d.last, d.desig, d.email, d.mobile, d.photo, d.uid, d.accr, d.remark, d.firstSeen, d.printed, d.delivered];
 };
 
 describe('normCard — every spelling found in the real Sheet2', () => {
@@ -45,6 +45,28 @@ describe('shapeGuests', () => {
     expect(guests[1].issues).toEqual(expect.arrayContaining(['dupUid', 'dupEmail', 'noPhoto']));
     expect(guests[2].issues).toEqual(expect.arrayContaining(['noUid', 'noCard']));
     expect(guests[3].issues).toContain('badUid');
+  });
+
+  it('flags odd values in the Printed / Delivered cells', () => {
+    const { guests } = shapeGuests([
+      row({ key: 'ok', printed: '15/11/26', delivered: '19/11/2026' }),
+      row({ key: 'p1', printed: 'PRINTED' }),
+      row({ key: 'p2', printed: '18/11/17' }),
+      row({ key: 'p3', printed: '11/17/2026' }),
+      row({ key: 'd1', printed: '15/11/26', delivered: 'Check' }),
+      row({ key: 'd2', delivered: 'Paid' }),
+    ]);
+    const odd = (g) => g.issues.filter((i) => i.startsWith('odd'));
+    expect(odd(guests[0])).toEqual([]);
+    expect(guests.slice(1, 4).map(odd)).toEqual([['oddPrinted'], ['oddPrinted'], ['oddPrinted']]);
+    expect(guests.slice(4).map(odd)).toEqual([['oddDelivered'], ['oddDelivered']]);
+    expect(guests[0].printedCell).toBe('15/11/26');
+  });
+
+  it('reads 13-field rows from an older backend without odd-value flags', () => {
+    const { guests } = shapeGuests([row({ key: 'old' }).slice(0, 13)]);
+    expect(guests[0].printedCell).toBe('');
+    expect(guests[0].issues.some((i) => i.startsWith('odd'))).toBe(false);
   });
 
   it('builds a lookup by key and full names', () => {
@@ -107,6 +129,16 @@ describe('filterGuests', () => {
     expect(f({ card: 'Official Invitee' })).toEqual(['a', 'b', 'c']);
     expect(f({ issue: 'labelFix' })).toEqual(['c']);
     expect(f({ st: 'new' })).toEqual(['b']);
+  });
+});
+
+describe('isDateLike — dd/mm/yy or dd/mm/yyyy, 2025–2027', () => {
+  it.each([
+    ['15/11/26', true], ['19/11/2026', true], ['1/1/25', true], [' 31/12/2027 ', true],
+    ['18/11/17', false], ['11/17/2026', false], ['32/11/26', false], ['00/11/26', false], ['15/11/2028', false],
+    ['2026-11-15', false], ['15-11-26', false], ['PRINTED', false], ['Check', false], ['Paid', false], ['', false], [null, false],
+  ])('%j → %s', (raw, ok) => {
+    expect(isDateLike(raw)).toBe(ok);
   });
 });
 

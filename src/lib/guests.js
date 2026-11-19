@@ -10,7 +10,18 @@ export const ISSUES = {
   noCard: ['Card type blank', 'Accreditation column is empty'],
   labelFix: ['Card type spelt differently', 'e.g. “Offcial Invitee”, “Add-Onn” — fix in the form sheet'],
   badUid: ['User ID is not a number', 'Something else was typed into the User ID column'],
+  oddPrinted: ['Odd value in Printed', 'Not a dd/mm/yy date — e.g. "PRINTED", "18/11/17", "11/17/2026"'],
+  oddDelivered: ['Odd value in Delivered', 'Not a date — e.g. "Check", "Paid"'],
 };
+
+/** True for the date format the team uses in Sheet2: dd/mm/yy or dd/mm/yyyy, in 2025–2027. */
+export function isDateLike(raw) {
+  const m = String(raw ?? '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (!m) return false;
+  const [d, mo] = [+m[1], +m[2]];
+  const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+  return d >= 1 && d <= 31 && mo >= 1 && mo <= 12 && y >= 2025 && y <= 2027;
+}
 
 export const STAGES = {
   ready: { label: 'To print', pill: 'bg-ready/12 text-ready', bg: 'bg-ready' },
@@ -92,8 +103,11 @@ export function shapeGuests(rows) {
   const uidCount = {};
   const emailCount = {};
   const guests = rows.map((a) => {
-    const [key, row, dept, first, last, desig, email, mobile, photoId, uid, accr, remark, firstSeen] = a;
-    const g = { key, row, dept, first, last, desig, email, mobile, photoId, uid, accr, remark, firstSeen: firstSeen || 0 };
+    const [key, row, dept, first, last, desig, email, mobile, photoId, uid, accr, remark, firstSeen, printedCell, deliveredCell] = a;
+    const g = {
+      key, row, dept, first, last, desig, email, mobile, photoId, uid, accr, remark, firstSeen: firstSeen || 0,
+      printedCell: String(printedCell ?? '').trim(), deliveredCell: String(deliveredCell ?? '').trim(),
+    };
     g.name = `${first} ${last}`.trim() || '(no name)';
     const n = normCard(accr);
     g.card = n.card;
@@ -111,6 +125,8 @@ export function shapeGuests(rows) {
     if (g.email && emailCount[g.email.toLowerCase()] > 1) issues.push('dupEmail');
     if (!g.photoId) issues.push('noPhoto');
     if (g.cardFlag) issues.push(g.cardFlag);
+    if (g.printedCell && !isDateLike(g.printedCell)) issues.push('oddPrinted');
+    if (g.deliveredCell && !isDateLike(g.deliveredCell)) issues.push('oddDelivered');
     g.issues = issues;
     g.hay = [g.name, g.email, g.mobile, g.uid, g.desig, g.dept, g.card].join(' ').toLowerCase();
     g.digits = String(g.mobile).replace(/\D/g, '');

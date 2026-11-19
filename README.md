@@ -60,17 +60,20 @@ Add `--simulate` to the emulator to have it add registrations and assign IDs eve
 1. Open the Google Sheet that has **Sheet2** → **Extensions → Apps Script**.
 2. Create a script file `GuestDesk` and paste `apps-script/GuestDesk.gs`.
    If the project already has a `doGet` / `doPost` / `setup` function, rename the old one, because names must be unique.
-3. Select **`setup`** → **Run** → allow permissions. It:
-   - adds `Printed` / `Delivered` headers to Sheet2 if missing (yours already has them)
+3. Select **`setup`** → **Run** → allow permissions (it asks for Drive access too, for the backups). It:
+   - adds `Printed` / `Delivered` headers to Sheet2 if missing (yours already has them; `To Print` etc. also count, see the guide)
    - creates the hidden tabs `_Ops_Track` and `_Ops_Log`
    - starts tracking (one `TRACKING STARTED` entry; existing statuses are kept as they are)
-   - installs a 1-minute background scan
+   - installs a 1-minute background scan and an **hourly backup** (and makes the first backup now)
    - sets the PIN to **2026**. **Change it**: ⚙ Project Settings → Script properties → `APP_PIN`.
 4. **Deploy → New deployment → Web app**: Execute as **Me**, Who has access **Anyone**.
    ("Anyone" is required for the hosted app to reach it; the PIN protects the data.)
 5. Open the `/exec` URL in a browser. You should see `{"ok":true,...}`.
 
-After changing backend code: **Deploy → Manage deployments → ✏ → Version: New version → Deploy** (the URL stays the same).
+**After changing backend code, always:**
+1. Paste the new `GuestDesk.gs` → save.
+2. **Deploy → Manage deployments → ✏ → Version: New version → Deploy** (the URL stays the same).
+3. Select **`setup`** → **Run**. This accepts Sheet2 as it is right now (nothing is restored or overwritten), refreshes the triggers and clears any loop-protection flags. It is always safe to run.
 
 ### Step 2: frontend (pick one)
 
@@ -90,8 +93,8 @@ In Apps Script: **+ → HTML** named exactly `Index` → paste the whole file �
 ## Testing
 
 ```bash
-npm test                    # 74 unit + backend + contract tests (no setup needed)
-npm run test:e2e            # 9 end-to-end tests: real build + real backend in the emulator, phone-sized browser
+npm test                    # 134 unit + backend + safety + contract tests (no setup needed)
+npm run test:e2e            # 10 end-to-end tests: real build + real backend in the emulator, phone-sized browser
 npm run check               # tests + both production builds
 
 TEST_XLSX=./All_Guest.xlsx npm test          # also run the backend over your exported Sheet2
@@ -101,7 +104,8 @@ First-time e2e needs a browser: `npx playwright install chromium` (or set `CHROM
 
 **What's covered:**
 - **Backend:** setup is idempotent; PIN; columns found by header in any order; dates in Printed and "Deleverd" in Remark understood; unique keys for duplicate rows; printed/delivered/undo write the right cells and only those; bulk updates on scattered rows; notes; hand edits in Sheet2 detected and logged; new rows; User ID assigned; field edits with before → after; removed rows; re-sorted rows keep status; re-sync wipe restored; half-written sheet ignored; activity filters; export; HTTP routing and errors; scan throttling; no false changes on re-scan.
-- **Frontend:** every card-type spelling in the real data, data checks, search, filters, WhatsApp numbers, IST dates.
+- **Safety (`tests/safety.test.js`):** header aliases ("To Print" read + write); a renamed status header freezes statuses (no restore, one `COLUMN MISSING`, warning, desk actions blocked); fixing it picks up typed dates, doesn't restore cleared marks, logs one `RESYNCED`; wipe loops restore once then never write again for 30 min; desk actions survive another script clearing them; `rewriteStatusesToSheet2` never overwrites typed values; 10-minute removal grace; "Paid"/"Check" are not delivered; hourly backups (48 kept) and dry-run restore.
+- **Frontend:** every card-type spelling in the real data, data checks (including odd Printed/Delivered values), `dd/mm/yy` date check, search, filters, WhatsApp numbers, IST dates.
 - **Contract:** the app's instant (optimistic) updates match what the server returns, for every action.
 - **End-to-end:** login, dashboard totals = Sheet2, hand-over + undo, hand edit in Sheet2 appears in the app, new registration appears, two phones in sync, offline queue, hand-over desk + already-collected warning, bulk with confirm, data checks.
 
@@ -114,8 +118,26 @@ A free Gmail account handles about 10 phones comfortably. For 20+ phones open al
 ## Troubleshooting
 | Symptom | Fix |
 |---|---|
+| **Red banner** under the header: *No "Printed" column in Sheet2 — was the header renamed?* | Someone renamed or deleted the `Printed` (or `Delivered`) header. Statuses are **frozen** at their last known values and marking cards is blocked, but nothing is lost. Rename the header back (or to an accepted name such as `To Print`, see the [guide](docs/GOOGLE_SHEETS_GUIDE.md#1-how-each-column-is-read)). The banner goes away within seconds and Activity shows one `System re-read Sheet2: X added · Y cleared`. |
+| Activity shows **"System restored N statuses"** over and over | This was the 17 Nov bug: the header was renamed, the old backend read every status as blank and kept "restoring" into a column that didn't exist. Paste the current `GuestDesk.gs`, deploy a new version and **run `setup()`**. That stops it. The current code freezes statuses instead of restoring them, and restores at most once per 30 minutes. |
+| Activity shows **"System stopped a wipe loop"** | Something (another script or a sync) keeps blanking Printed/Delivered right after they were restored. The app keeps showing the last known values and **doesn't write to Sheet2** until it stops. Find and fix the other script, then in Apps Script run **`rewriteStatusesToSheet2`**. It fills only **empty** cells from the last known values and never overwrites anything typed. |
+| A guest shows "Odd value in Printed/Delivered" | The cell has something other than a `dd/mm/yy` date (e.g. `PRINTED`, `18/11/17`, `Paid`). Fix it in Sheet2. "Paid"/"Check" in Delivered **do not** count as delivered. |
+| Need to go back to an earlier state | See **Backups** below. |
 | "Backend did not return JSON" | Web app access must be **Anyone**; use the `/exec` URL, not `/dev`. |
 | "Wrong PIN" for everyone | Check `APP_PIN` in Script properties (takes up to 2 min to apply). |
 | Changes in Sheet2 take a minute to show | Normal when no phone has the app open; with the app open it takes about 10 s. Calling `guestDeskDataChanged()` from your sync makes it instant. |
 | "Sheet2 is being re-synced right now" | The sync was mid-write; try again in a few seconds. |
 | Photos don't show | They load through the owner's Drive access; check the Photograph URL is a Drive link. |
+
+## Backups
+Every hour (and every time `setup()` runs) the backend copies **Sheet2**, **_Ops_Track** and **_Ops_Log** into a separate spreadsheet called **"IFFI Guest Desk – Backups"** in the owner's Drive. Each run adds one tab per source, named like `2026-11-19 14:00 Sheet2`. The last 48 runs (2 days) are kept. A CSV copy of Sheet2 also goes into the Drive folder **"IFFI Guest Desk Backups"** (last 48 files). Each run adds one `BACKUP` line to Activity. To back up right now, run **`backupNow`** in Apps Script.
+
+**To restore** (e.g. Sheet2 was badly overwritten):
+1. Open "IFFI Guest Desk – Backups" (link in `setup()`'s log, or search Drive) and pick the tab to go back to, e.g. `2026-11-19 14:00 Sheet2`.
+2. In Apps Script add a small function and run it. It's a **dry run**: it only logs how many cells differ.
+   ```js
+   function doRestore() { restoreFromBackup('2026-11-19 14:00 Sheet2'); }
+   ```
+3. If the count looks right, change it to `restoreFromBackup('2026-11-19 14:00 Sheet2', true)` and run it again. Before writing, it saves the current state as a new backup, so the restore itself can be undone. Then Sheet2 is accepted as-is (one `RESYNCED` + one `RESTORED` entry, no per-guest noise).
+
+The same works for `… _Ops_Track` and `… _Ops_Log` tabs.

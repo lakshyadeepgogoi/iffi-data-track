@@ -30,6 +30,11 @@ export function DeskProvider({ children }) {
   const [queueLen, setQueueLen] = useState(() => store.get('queue', []).length);
   const [statusTick, setStatusTick] = useState(0);
   const [toast, setToast] = useState(null);
+  const [warnings, setWarningsState] = useState([]); // backend alerts, e.g. a renamed "Printed" header
+  const setWarnings = useCallback((w) => {
+    const next = Array.isArray(w) ? w.map(String) : [];
+    setWarningsState((prev) => (prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next));
+  }, []);
 
   // Refs are the source of truth inside async code (no stale closures).
   const authRef = useRef(auth);
@@ -69,9 +74,10 @@ export function DeskProvider({ children }) {
     const r = await call('apiSnapshot', authRef.current);
     vRef.current = r.v;
     applyData(r.guests, r.status);
+    setWarnings(r.warnings);
     store.set('cache', { guests: r.guests, status: r.status, at: Date.now() });
     markOk();
-  }, [applyData, markOk]);
+  }, [applyData, markOk, setWarnings]);
 
   const loadCache = useCallback(() => {
     const c = store.get('cache', null);
@@ -167,6 +173,7 @@ export function DeskProvider({ children }) {
             const r = await call('apiStatus', authRef.current);
             vRef.current = r.v;
             commitStatus(withQueue(r.status, queueRef.current, authRef.current?.name || ''));
+            setWarnings(r.warnings);
             setStatusTick((t) => t + 1);
           }
           markOk();
@@ -194,7 +201,7 @@ export function DeskProvider({ children }) {
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('online', wake);
     };
-  }, [phase, flushQueue, loadAll, commitStatus, markOk, notify, logout]);
+  }, [phase, flushQueue, loadAll, commitStatus, markOk, notify, logout, setWarnings]);
 
   /* ── writes: optimistic, with undo and offline fallback ── */
   const setStatus = useCallback(
@@ -255,10 +262,10 @@ export function DeskProvider({ children }) {
 
   const value = useMemo(
     () => ({
-      auth, phase, guests: data.guests, byKey: data.byKey, status, live, lastOk, queueLen, statusTick,
+      auth, phase, guests: data.guests, byKey: data.byKey, status, live, lastOk, queueLen, statusTick, warnings,
       toast, setToast, notify, login, logout, setStatus, saveNote, api,
     }),
-    [auth, phase, data, status, live, lastOk, queueLen, statusTick, toast, notify, login, logout, setStatus, saveNote, api],
+    [auth, phase, data, status, live, lastOk, queueLen, statusTick, warnings, toast, notify, login, logout, setStatus, saveNote, api],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

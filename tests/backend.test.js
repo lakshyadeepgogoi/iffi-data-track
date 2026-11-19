@@ -12,12 +12,14 @@ const C = Object.fromEntries(HEADER.map((h, i) => [h, i + 1])); // 1-based colum
 let env, gs, sheet;
 const today = () => gs.today_();
 const log = () => env.ss.getSheetByName('_Ops_Log').rows().slice(1);
-const actions = () => log().map((r) => r[2]);
+const actions = () => log().map((r) => r[2]).filter((a) => a !== 'BACKUP'); // hourly backups are tested separately
 const snap = () => gs.apiSnapshot(AUTH);
 const keyOfRow = (row) => snap().guests.find((g) => g[1] === row)[0];
 const cell = (row, col) => sheet.rows()[row - 1][C[col] - 1];
 const setCell = (row, col, v) => { sheet.rows()[row - 1][C[col] - 1] = v; };
 const rescan = () => { env.cache.remove('FRESH'); return gs.apiVersion(AUTH); };
+const MIN = 60_000;
+const later = (min) => env.advance(min * MIN);
 
 function boot(rows = makeSheet2(120)) {
   const ss = new FakeSpreadsheet();
@@ -30,11 +32,11 @@ function boot(rows = makeSheet2(120)) {
 beforeEach(() => boot());
 
 describe('setup', () => {
-  it('creates hidden helper tabs, PIN and a 1-minute trigger', () => {
+  it('creates hidden helper tabs, PIN, a 1-minute scan and an hourly backup trigger', () => {
     expect(env.ss.getSheetByName('_Ops_Track').hidden).toBe(true);
     expect(env.ss.getSheetByName('_Ops_Log').hidden).toBe(true);
     expect(env.props.get('APP_PIN')).toBe('2026');
-    expect(env.triggers.map((t) => t.getHandlerFunction())).toEqual(['reconcileTrigger']);
+    expect(env.triggers.map((t) => t.getHandlerFunction())).toEqual(['reconcileTrigger', 'backupNow']);
   });
 
   it('logs one TRACKING STARTED entry, not one per guest', () => {
@@ -44,7 +46,7 @@ describe('setup', () => {
 
   it('is safe to run twice (no duplicate trigger, no new log noise)', () => {
     gs.setup();
-    expect(env.triggers).toHaveLength(1);
+    expect(env.triggers).toHaveLength(2);
     expect(actions()).toEqual(['TRACKING STARTED']);
   });
 
@@ -240,8 +242,10 @@ describe('tracking changes made directly in Sheet2', () => {
     expect(last[7]).toMatch(/Accreditation: .* → Official Invitee/);
   });
 
-  it('logs REMOVED when a row disappears', () => {
+  it('logs REMOVED when a row has been gone for 10 minutes', () => {
     sheet.deleteRow(3);
+    rescan();
+    later(10);
     rescan();
     expect(actions().at(-1)).toBe('REMOVED');
   });

@@ -161,6 +161,24 @@ test('bulk select → Printed asks to confirm and writes every row', async ({ pa
   for (const g of [g1, g2]) await expect.poll(() => cellOf(request, g.row, 'Printed')).toBe(today());
 });
 
+test('a renamed "Printed" header shows a red alert, blocks marks, and clears when fixed', async ({ page, request }) => {
+  const { row, uid } = await freshRow(request);
+  await login(page);
+  await request.post(`${API}/sheet2/cell`, { data: { row: 1, header: 'Printed', value: 'Status' } });
+  try {
+    await expect(page.getByRole('alert')).toContainText('No "Printed" column in Sheet2', { timeout: 30_000 });
+    await openGuest(page, uid);
+    await page.getByRole('button', { name: 'Mark card printed' }).click();
+    await expect(page.getByText(/Failed: Sheet2 has no "Printed" column/)).toBeVisible();
+    expect(await cellOf(request, row, 'Status')).toBe('');
+  } finally {
+    await request.post(`${API}/sheet2/cell`, { data: { row: 1, header: 'Status', value: 'Printed' } });
+  }
+  await expect(page.getByRole('alert')).toHaveCount(0, { timeout: 30_000 });
+  await page.getByRole('button', { name: 'Mark card printed' }).click();
+  await expect.poll(() => cellOf(request, row, 'Printed')).toBe(today());
+});
+
 test('data checks open the matching guests', async ({ page, request }) => {
   const rows = await sheet2(request);
   const u = col(rows, 'User ID');

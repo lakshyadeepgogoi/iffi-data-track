@@ -16,8 +16,16 @@
  *               delivered, removed) and who/when for each card
  *   _Ops_Log    the full audit trail shown in the app's Activity tab
  *
+ * Safety nets (see docs/GOOGLE_SHEETS_GUIDE.md):
+ *   • a renamed/missing Printed or Delivered header FREEZES statuses (never "wiped")
+ *   • a re-sync that blanks many statuses is written back ONCE, then never again
+ *     for PROTECT_MINUTES (no restore loops)
+ *   • rows must be missing for REMOVE_GRACE_MINUTES before they count as removed
+ *   • hourly backup of Sheet2 + helper tabs into a separate spreadsheet
+ *
  * Setup: paste this file → run setup() once → Deploy as Web app (Execute as: Me,
- * Who has access: Anyone). Full guide in README.md.
+ * Who has access: Anyone). ALWAYS run setup() again after updating this code.
+ * Full guide in README.md.
  */
 
 const CFG = {
@@ -29,16 +37,32 @@ const CFG = {
   DATE_FORMAT: 'dd/MM/yy',     // same format the team already types into "Printed"
   CHECK_SECONDS: 8,            // how often (at most) Sheet2 is re-scanned for changes
   WIPE_MIN_ROWS: 10,           // this many statuses vanishing at once = a re-sync wiped them → restore
+  PROTECT_MINUTES: 30,         // after a restore, never write to Sheet2 again for this long (stops loops)
+  WARN_MINUTES: 30,            // at most one COLUMN MISSING / WIPE LOOP log entry per this many minutes
+  REMOVE_GRACE_MINUTES: 10,    // a row must be gone this long before it is logged as REMOVED
   MIN_ROWS_RATIO: 0.5,         // Sheet2 suddenly has < 50 % of known guests = sync in progress → wait
   DEFAULT_PIN: '2026',
+  BACKUP_NAME: 'IFFI Guest Desk – Backups',   // separate spreadsheet, created on first backup
+  BACKUP_FOLDER: 'IFFI Guest Desk Backups',   // Drive folder for the optional CSV copies
+  BACKUP_KEEP: 48,             // runs kept per source tab (48 × hourly = 2 days)
+  BACKUP_CSV: true,            // also save Sheet2 as CSV in Drive
 };
 
-/** Sheet2 headers (matched case-insensitively, any column order). */
+/** Sheet2 headers (matched case-insensitively, any column order). The first name is
+ *  the main one (used when setup() has to add a column); the others are accepted too. */
 const COL = {
-  dept: 'Department', first: 'First Name', last: 'Last Name', desig: 'Designation/Job Title',
-  email: 'Official Email Address', mobile: 'Mobile Number', photo: 'Photograph URL',
-  uid: 'User ID', accr: 'Accreditation', remark: 'Remark', printed: 'Printed', delivered: 'Delivered',
+  dept: ['Department'], first: ['First Name'], last: ['Last Name'],
+  desig: ['Designation/Job Title', 'Designation'],
+  email: ['Official Email Address', 'Email'],
+  mobile: ['Mobile Number', 'Mobile'],
+  photo: ['Photograph URL', 'Photo'],
+  uid: ['User ID', 'UserID'],
+  accr: ['Accreditation', 'Card Type'],
+  remark: ['Remark', 'Remarks'],
+  printed: ['Printed', 'To Print', 'Print', 'Printed Date', 'Print Date', 'Card Printed'],
+  delivered: ['Delivered', 'Delivery', 'Delivered Date', 'Delivery Date', 'Handed Over', 'Collected'],
 };
+const STATUS_FIELDS = ['printed', 'delivered'];
 /** Fields whose edits are tracked and logged. */
 const TRACKED = ['first', 'last', 'desig', 'email', 'mobile', 'photo', 'uid', 'accr', 'remark'];
 const LABEL = {
@@ -47,9 +71,9 @@ const LABEL = {
 };
 
 /* _Ops_Track columns */
-const T = { key: 0, row: 1, dept: 2, name: 3, uid: 4, pRaw: 5, dRaw: 6, pAt: 7, pBy: 8, dAt: 9, dBy: 10, note: 11, fp: 12, firstSeen: 13, removed: 14 };
+const T = { key: 0, row: 1, dept: 2, name: 3, uid: 4, pRaw: 5, dRaw: 6, pAt: 7, pBy: 8, dAt: 9, dBy: 10, note: 11, fp: 12, firstSeen: 13, removed: 14, missing: 15 };
 const TRACK_HEAD = ['Key', 'Sheet2 Row', 'Department', 'Name', 'User ID', 'Printed (last seen)', 'Delivered (last seen)',
-  'Printed At', 'Printed By', 'Delivered At', 'Delivered By', 'Desk Note', 'Fingerprint', 'First Seen', 'Removed At'];
+  'Printed At', 'Printed By', 'Delivered At', 'Delivered By', 'Desk Note', 'Fingerprint', 'First Seen', 'Removed At', 'Missing Since'];
 const LOG_HEAD = ['Time', 'By', 'Action', 'Key', 'User ID', 'Name', 'Department', 'Details'];
 
 const SHEET_ACTOR = 'Sheet2';    // "who" for changes made directly in the sheet
@@ -57,6 +81,9 @@ const SYSTEM_ACTOR = 'System';
 const FP_SEP = '␟';
 const DELIVERED_WORD = /\b(?:del[ie]v[ae]?re?d|collected|handed over)\b/i;
 const NOT_WORD = /\b(?:not|un|pending)\b/i;
+/** Words that count as "delivered" in the Delivered column (besides a date). */
+const DELIVERED_MARK = /^(?:yes|y|done|ok|true|✓|✔|delivered|deleverd|delivred|collected|handed over)$/i;
+const MINUTE = 60 * 1000;
 
 /* ══════════════════════════ Web app entry points ══════════════════════════ */
 
@@ -96,40 +123,62 @@ function json_(obj) {
 
 /* ══════════════════════════ Setup & triggers ══════════════════════════ */
 
-/** Run once from the editor (safe to run again). */
+/** Run once from the editor, and again after every code update (safe to run any time).
+ *  Accepts Sheet2 exactly as it is now: nothing is restored or written back. */
 function setup() {
   const ss = ss_();
   const sh = ss.getSheetByName(CFG.SOURCE_SHEET);
   if (!sh) throw new Error('Sheet "' + CFG.SOURCE_SHEET + '" not found');
 
+  ensureSheet_(ss, CFG.TRACK_SHEET, TRACK_HEAD);
+  ensureSheet_(ss, CFG.LOG_SHEET, LOG_HEAD);
+
   // Make sure Sheet2 has the two status columns.
   const lastCol = Math.max(sh.getLastColumn(), 1);
   const head = sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function (h) { return clean_(h).toLowerCase(); });
-  let next = head.length;
-  while (next > 0 && !head[next - 1]) next--;          // first empty column after the last header
-  ['printed', 'delivered'].forEach(function (k) {
-    if (head.indexOf(COL[k].toLowerCase()) < 0) {
+  const add = STATUS_FIELDS.filter(function (k) { return findCol_(head, k) < 0; });
+  if (add.length) {
+    // A column that has values on record was almost certainly renamed, not never there.
+    // Adding an empty one would silently clear every status, so stop and explain instead.
+    const tr = readTrack_();
+    add.forEach(function (k) {
+      const f = k === 'printed' ? T.pRaw : T.dRaw;
+      const known = tr.rows.filter(function (r) { return r[T.key] && !r[T.removed] && String(r[f]).trim(); }).length;
+      if (known) {
+        throw new Error(CFG.SOURCE_SHEET + ' has no "' + COL[k][0] + '" column, but ' + known + ' guests have a ' + k +
+          ' value on record — was the header renamed? Rename it back to "' + COL[k][0] + '" (accepted: ' + COL[k].join(', ') +
+          ') and run setup() again. Nothing was changed.');
+      }
+    });
+    let next = head.length;
+    while (next > 0 && !head[next - 1]) next--;        // first empty column after the last header
+    add.forEach(function (k) {
       next++;
-      sh.getRange(1, next, 1, 1).setValues([[COL[k]]]).setFontWeight('bold');
-    }
-  });
-
-  ensureSheet_(ss, CFG.TRACK_SHEET, TRACK_HEAD);
-  ensureSheet_(ss, CFG.LOG_SHEET, LOG_HEAD);
+      sh.getRange(1, next, 1, 1).setValues([[COL[k][0]]]).setFontWeight('bold');
+    });
+  }
 
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty('APP_PIN')) props.setProperty('APP_PIN', CFG.DEFAULT_PIN);
 
-  const res = withLock_(function () { return reconcile_(); });
+  const res = withLock_(function () { return reconcile_({ acceptSheet: true }); });
+  ['LAST_WIPE_AT', 'LAST_WIPE_WARN', 'LAST_COL_WARN'].forEach(function (p) { props.deleteProperty(p); });
 
   // Re-scan every minute even when no phone is open, so the log never misses a change.
+  // Back up every hour.
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'reconcileTrigger') ScriptApp.deleteTrigger(t);
+    const fn = t.getHandlerFunction();
+    if (fn === 'reconcileTrigger' || fn === 'backupNow') ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('reconcileTrigger').timeBased().everyMinutes(1).create();
+  ScriptApp.newTrigger('backupNow').timeBased().everyHours(1).create();
+
+  let backup;
+  try { backup = backupNow(); } catch (e) { backup = { error: String((e && e.message) || e) }; }
 
   const msg = 'Setup done. Tracking ' + res.src.guests.length + ' guests from ' + CFG.SOURCE_SHEET +
-    '. PIN = ' + props.getProperty('APP_PIN') + ' (change in Project Settings → Script properties → APP_PIN).';
+    '. PIN = ' + props.getProperty('APP_PIN') + ' (change in Project Settings → Script properties → APP_PIN). ' +
+    (backup.error ? 'Backup FAILED: ' + backup.error : 'Backup saved to "' + CFG.BACKUP_NAME + '" (' + backup.url + '), hourly from now on.');
   Logger.log(msg);
   return msg;
 }
@@ -165,10 +214,11 @@ function apiSnapshot(auth) {
       guests: res.src.guests.map(function (g) {
         const t = trackOf_(res.tr, g.key);
         return [g.key, g.row, g.dept, g.first, g.last, g.desig, g.email, g.mobile, driveId_(g.photo), g.uid, g.accr, g.remark,
-          t ? ts_(t[T.firstSeen]) : 0];
+          t ? ts_(t[T.firstSeen]) : 0, g.printedCell, g.deliveredCell];
       }),
       status: statusMap_(res),
       v: currentVersions_(),
+      warnings: res.warnings,
       now: Date.now(),
     };
   });
@@ -182,7 +232,7 @@ function apiVersion(auth) {
 function apiStatus(auth) {
   return api_(auth, function () {
     const res = withLock_(function () { return reconcile_(); });
-    return { status: statusMap_(res), v: currentVersions_() };
+    return { status: statusMap_(res), v: currentVersions_(), warnings: res.warnings };
   });
 }
 
@@ -196,7 +246,7 @@ function apiSet(auth, keys, field, value, note) {
       const res = reconcile_();
       if (res.skipped) throw new Error(CFG.SOURCE_SHEET + ' is being re-synced right now. Try again in a few seconds.');
       const src = res.src;
-      if (src.idx.printed < 0 || src.idx.delivered < 0) throw new Error('Sheet2 needs "Printed" and "Delivered" columns. Run setup().');
+      if (res.missing.length) throw new Error(missingMsg_(res.missing[0]));
       const gmap = byKey_(src.guests);
       const today = today_();
       const now = new Date();
@@ -214,12 +264,13 @@ function apiSet(auth, keys, field, value, note) {
 
         if (field === 'printed') {
           if (value) { if (!truthy_(p)) p = today; }
-          else { p = ''; d = ''; rem = stripDelivered_(rem); }   // not printed ⇒ not delivered
+          else { p = ''; if (deliveredMark_(d)) d = ''; rem = stripDelivered_(rem); }   // not printed ⇒ not delivered
         } else if (value) {
-          if (!truthy_(d) && !remarkDelivered_(rem)) d = today;
+          if (!deliveredMark_(d) && !remarkDelivered_(rem)) d = today;   // "Paid", "Check"… are overwritten
           if (!truthy_(p)) p = today;                           // delivered ⇒ printed
         } else {
-          d = ''; rem = stripDelivered_(rem);
+          if (deliveredMark_(d)) d = '';
+          rem = stripDelivered_(rem);
         }
 
         if (p !== g.printedRaw) cells.printed.push({ row: g.row, value: p });
@@ -334,13 +385,27 @@ function apiPhoto(auth, id) {
 
 /**
  * Compares Sheet2 with what was seen last time and records every difference.
- * Must run inside the script lock. Returns { src, tr, skipped }.
+ * Must run inside the script lock. Returns { src, tr, skipped, missing, warnings }.
+ *
+ * opts.acceptSheet: take Sheet2's Printed/Delivered exactly as they are (no restore, no
+ * per-guest logs, one RESYNCED entry). Also switched on automatically the first time a
+ * missing status column is back.
  */
-function reconcile_() {
+function reconcile_(opts) {
+  opts = opts || {};
   const src = readSource_();
   const tr = readTrack_();
   const now = new Date();
-  const res = { src: src, tr: tr, skipped: false };
+  const nowMs = now.getTime();
+  const props = PropertiesService.getScriptProperties();
+  const P = props.getProperties();
+  const missing = STATUS_FIELDS.filter(function (k) { return src.idx[k] < 0; });
+  const res = {
+    src: src, tr: tr, skipped: false, missing: missing,
+    warnings: missing.map(function (k) {
+      return 'No "' + COL[k][0] + '" column in ' + CFG.SOURCE_SHEET + ' — was the header renamed? Statuses are frozen until it is back.';
+    }),
+  };
 
   const active = tr.rows.filter(function (r) { return r[T.key] && !r[T.removed]; }).length;
   if (active >= 20 && src.guests.length < active * CFG.MIN_ROWS_RATIO) {
@@ -349,23 +414,48 @@ function reconcile_() {
   }
 
   const firstRun = tr.rows.length === 0;
+  const wasColMissing = P.COL_MISSING === '1';
+  const acceptSheet = !missing.length && (!!opts.acceptSheet || wasColMissing);
   const logs = [];
   const statusChanges = [];
   const present = {};
   let dirty = false, dataChanged = false, statusChanged = false;
+
+  // A status column that can't be found is FROZEN at its last known values — never read as "all blank".
+  if (missing.length) {
+    if (!wasColMissing) { props.setProperty('COL_MISSING', '1'); statusChanged = true; }  // phones fetch the warning
+    if (nowMs - Number(P.LAST_COL_WARN || 0) >= CFG.WARN_MINUTES * MINUTE) {
+      props.setProperty('LAST_COL_WARN', String(nowMs));
+      const names = missing.map(function (k) { return '"' + COL[k][0] + '"'; }).join(' + ');
+      logs.push([now, SYSTEM_ACTOR, 'COLUMN MISSING', '', '', names + ' column', '',
+        'No ' + names + ' header in ' + CFG.SOURCE_SHEET + ' (accepted: ' +
+        missing.map(function (k) { return COL[k].join(', '); }).join(' / ') +
+        '). Statuses are frozen at their last known values and desk actions are blocked until the header is back.']);
+    }
+  }
 
   src.guests.forEach(function (g) {
     present[g.key] = true;
     const fp = fingerprint_(g);
     let t = trackOf_(tr, g.key);
 
+    if (t) {
+      if (src.idx.printed < 0) g.printedRaw = String(t[T.pRaw]);
+      if (src.idx.delivered < 0) g.deliveredRaw = String(t[T.dRaw]);
+    }
+
     if (!t) {
-      t = [g.key, g.row, g.dept, g.name, g.uid, g.printedRaw, g.deliveredRaw, '', '', '', '', '', fp, firstRun ? '' : now, ''];  // rows present before tracking began have no first-seen time
+      t = [g.key, g.row, g.dept, g.name, g.uid, g.printedRaw, g.deliveredRaw, '', '', '', '', '', fp, firstRun ? '' : now, '', ''];  // rows present before tracking began have no first-seen time
       tr.rows.push(t);
       tr.map[g.key] = tr.rows.length - 1;
       dirty = dataChanged = true;
       if (!firstRun) logs.push(logRow_(now, SHEET_ACTOR, 'NEW GUEST', g, [g.accr, g.uid ? 'ID ' + g.uid : 'no User ID yet'].filter(String).join(' · ')));
       return;
+    }
+
+    if (t[T.missing]) {                     // back within the grace period: nothing happened
+      t[T.missing] = '';
+      dirty = true;
     }
 
     if (t[T.removed]) {
@@ -382,7 +472,7 @@ function reconcile_() {
           diff.map(function (c) { return LABEL[c.k] + ': ' + (c.from || '—') + ' → ' + (c.to || '—'); }).join('; ').slice(0, 1000)));
         if (diff.some(function (c) { return c.k === 'remark' && remarkDelivered_(c.from) !== remarkDelivered_(c.to); })) {
           statusChanged = true;
-          const delivered = remarkDelivered_(g.remark) || truthy_(g.deliveredRaw);
+          const delivered = remarkDelivered_(g.remark) || deliveredMark_(g.deliveredRaw);
           t[T.dAt] = delivered ? (t[T.dAt] || now) : '';
           t[T.dBy] = delivered ? (t[T.dBy] || SHEET_ACTOR) : '';
         }
@@ -400,34 +490,61 @@ function reconcile_() {
     if (g.deliveredRaw !== String(t[T.dRaw])) statusChanges.push({ g: g, t: t, field: 'delivered', from: String(t[T.dRaw]), to: g.deliveredRaw });
   });
 
+  // Rows that vanish get a grace period: a sync that briefly drops a department is not a removal.
   tr.rows.forEach(function (t) {
-    if (t[T.key] && !present[t[T.key]] && !t[T.removed]) {
-      t[T.removed] = now;
-      dirty = dataChanged = true;
-      logs.push([now, SHEET_ACTOR, 'REMOVED', t[T.key], String(t[T.uid]), t[T.name], t[T.dept], 'Row no longer in ' + CFG.SOURCE_SHEET]);
-    }
+    if (!t[T.key] || present[t[T.key]] || t[T.removed]) return;
+    if (!t[T.missing]) { t[T.missing] = now; dirty = true; return; }
+    if (nowMs - ts_(t[T.missing]) < CFG.REMOVE_GRACE_MINUTES * MINUTE) return;
+    t[T.removed] = now;
+    t[T.missing] = '';
+    dirty = dataChanged = true;
+    logs.push([now, SHEET_ACTOR, 'REMOVED', t[T.key], String(t[T.uid]), t[T.name], t[T.dept], 'Row no longer in ' + CFG.SOURCE_SHEET]);
   });
 
-  // A re-sync that blanks many statuses at once is restored, not accepted.
-  const wipes = statusChanges.filter(function (c) { return truthy_(c.from) && !c.to; });
-  let restoreSet = [];
-  if (!firstRun && wipes.length >= CFG.WIPE_MIN_ROWS && wipes.length >= statusChanges.length * 0.8) {
-    restoreSet = wipes;
-    const cells = { printed: [], delivered: [] };
-    wipes.forEach(function (c) {
-      cells[c.field].push({ row: c.g.row, value: c.from });
-      if (c.field === 'printed') c.g.printedRaw = c.from; else c.g.deliveredRaw = c.from;
-    });
-    writeCells_(src, src.idx.printed + 1, cells.printed);
-    writeCells_(src, src.idx.delivered + 1, cells.delivered);
-    logs.push([now, SYSTEM_ACTOR, 'RESTORED', '', '', wipes.length + ' statuses', '',
-      'Printed/Delivered were blanked by a re-sync of ' + CFG.SOURCE_SHEET + ' and have been written back']);
+  const setRaw = function (c, v) { if (c.field === 'printed') c.g.printedRaw = v; else c.g.deliveredRaw = v; };
+  let restored = [], held = [];
+  if (!firstRun && !acceptSheet) {
+    const wipes = statusChanges.filter(function (c) { return truthy_(c.from) && !c.to; });
+    const big = wipes.length >= CFG.WIPE_MIN_ROWS && wipes.length >= statusChanges.length * 0.8;
+    const lastWipe = Number(P.LAST_WIPE_AT || 0);
+    const protecting = lastWipe > 0 && nowMs - lastWipe < CFG.PROTECT_MINUTES * MINUTE;
+
+    if (wipes.length && protecting) {
+      // Something keeps blanking Sheet2 (another script / sync). Writing back again would
+      // only feed the loop, so keep the last known values here and leave Sheet2 alone.
+      held = wipes;
+      wipes.forEach(function (c) { setRaw(c, c.from); });
+      if (big) props.setProperty('LAST_WIPE_AT', String(nowMs));
+      if (nowMs - Number(P.LAST_WIPE_WARN || 0) >= CFG.WARN_MINUTES * MINUTE) {
+        props.setProperty('LAST_WIPE_WARN', String(nowMs));
+        logs.push([now, SYSTEM_ACTOR, 'WIPE LOOP', '', '', wipes.length + ' statuses held', '',
+          'Printed/Delivered in ' + CFG.SOURCE_SHEET + ' were blanked again within ' + CFG.PROTECT_MINUTES +
+          ' min of a restore. Nothing was written to ' + CFG.SOURCE_SHEET + '; the app keeps showing the last known values. ' +
+          'Check other scripts/syncs that write to ' + CFG.SOURCE_SHEET + ', then run rewriteStatusesToSheet2().']);
+      }
+    } else if (big) {
+      // A re-sync that blanks many statuses at once is written back — once.
+      restored = wipes;
+      const cells = { printed: [], delivered: [] };
+      wipes.forEach(function (c) {
+        cells[c.field].push({ row: c.g.row, value: c.from });
+        setRaw(c, c.from);
+      });
+      writeCells_(src, src.idx.printed + 1, cells.printed);
+      writeCells_(src, src.idx.delivered + 1, cells.delivered);
+      props.setProperty('LAST_WIPE_AT', String(nowMs));
+      dataChanged = true;
+      logs.push([now, SYSTEM_ACTOR, 'RESTORED', '', '', wipes.length + ' statuses', '',
+        'Printed/Delivered were blanked by a re-sync of ' + CFG.SOURCE_SHEET + ' and have been written back']);
+    }
   }
 
+  let added = 0, cleared = 0;
   statusChanges.forEach(function (c) {
-    if (restoreSet.indexOf(c) >= 0) return;
+    if (restored.indexOf(c) >= 0 || held.indexOf(c) >= 0) return;
     const t = c.t, g = c.g;
-    const wasOn = truthy_(c.from), isOn = truthy_(c.to);
+    const mark = c.field === 'printed' ? truthy_ : deliveredMark_;
+    const wasOn = mark(c.from), isOn = mark(c.to);
     if (c.field === 'printed') {
       t[T.pRaw] = c.to;
       if (isOn && !wasOn) { t[T.pAt] = now; t[T.pBy] = SHEET_ACTOR; }
@@ -438,11 +555,21 @@ function reconcile_() {
       if (delivered && !t[T.dAt]) { t[T.dAt] = now; t[T.dBy] = SHEET_ACTOR; }
       if (!delivered) { t[T.dAt] = ''; t[T.dBy] = ''; }
     }
-    dirty = statusChanged = true;
-    if (wasOn !== isOn) {
-      logs.push(logRow_(now, SHEET_ACTOR, (isOn ? '' : 'UNDO ') + c.field.toUpperCase(), g, c.to ? 'Sheet2 value: ' + c.to : 'cleared in Sheet2'));
-    }
+    dirty = statusChanged = dataChanged = true;   // dataChanged: phones refetch the raw cells too
+    if (wasOn === isOn) return;
+    if (acceptSheet) { if (isOn) added++; else cleared++; }
+    else logs.push(logRow_(now, SHEET_ACTOR, (isOn ? '' : 'UNDO ') + c.field.toUpperCase(), g, c.to ? 'Sheet2 value: ' + c.to : 'cleared in Sheet2'));
   });
+
+  if (acceptSheet) {
+    if (!firstRun && (wasColMissing || added || cleared)) {
+      logs.push([now, SYSTEM_ACTOR, 'RESYNCED', '', '', added + ' added · ' + cleared + ' cleared', '',
+        (wasColMissing ? 'Status columns are back in ' + CFG.SOURCE_SHEET + '. ' : '') +
+        'Statuses re-read from ' + CFG.SOURCE_SHEET + ' as they are now. Nothing was written to ' + CFG.SOURCE_SHEET + '.']);
+    }
+    if (wasColMissing) { props.deleteProperty('COL_MISSING'); props.deleteProperty('LAST_COL_WARN'); statusChanged = true; }
+    if (P.LAST_WIPE_AT) props.deleteProperty('LAST_WIPE_AT');
+  }
 
   if (firstRun) {
     logs.length = 0;
@@ -451,8 +578,50 @@ function reconcile_() {
   if (dirty) writeTrack_(tr);
   if (logs.length) appendLog_(logs);
   if (dataChanged) bump_('D');
-  if (statusChanged || restoreSet.length) bump_('S');
+  if (statusChanged || restored.length) bump_('S');
   return res;
+}
+
+/**
+ * Run by hand (editor → Run) after a WIPE LOOP warning, once the other script is fixed.
+ * Fills ONLY EMPTY Printed/Delivered cells in Sheet2 from the last known values.
+ * A value typed in Sheet2 is never overwritten. Also ends the loop protection.
+ */
+function rewriteStatusesToSheet2() {
+  const msg = withLock_(function () {
+    const res = reconcile_();
+    if (res.skipped) throw new Error(CFG.SOURCE_SHEET + ' is being re-synced right now. Try again in a minute.');
+    if (res.missing.length) throw new Error(missingMsg_(res.missing[0]));
+    const src = readSource_();                 // the real cells, not the values held in memory
+    const cells = { printed: [], delivered: [] };
+    src.guests.forEach(function (g) {
+      const t = trackOf_(res.tr, g.key);
+      if (!t) return;
+      if (!g.printedCell && truthy_(t[T.pRaw])) cells.printed.push({ row: g.row, value: String(t[T.pRaw]) });
+      if (!g.deliveredCell && deliveredMark_(t[T.dRaw])) cells.delivered.push({ row: g.row, value: String(t[T.dRaw]) });
+    });
+    writeCells_(src, src.idx.printed + 1, cells.printed);
+    writeCells_(src, src.idx.delivered + 1, cells.delivered);
+    const props = PropertiesService.getScriptProperties();
+    props.deleteProperty('LAST_WIPE_AT');
+    props.deleteProperty('LAST_WIPE_WARN');
+    const n = cells.printed.length + cells.delivered.length;
+    if (n) {
+      appendLog_([[new Date(), SYSTEM_ACTOR, 'RESTORED', '', '', n + ' statuses', '',
+        'rewriteStatusesToSheet2(): ' + cells.printed.length + ' Printed + ' + cells.delivered.length +
+        ' Delivered empty cells filled from the last known values. Typed values were not touched.']]);
+      bump_('D');
+      bump_('S');
+    }
+    return 'Filled ' + cells.printed.length + ' empty Printed and ' + cells.delivered.length +
+      ' empty Delivered cells in ' + CFG.SOURCE_SHEET + '. Loop protection cleared.';
+  });
+  Logger.log(msg);
+  return msg;
+}
+
+function missingMsg_(k) {
+  return CFG.SOURCE_SHEET + ' has no "' + COL[k][0] + '" column — was the header renamed? Rename it back (or run setup()) and try again.';
 }
 
 function diff_(oldFp, g) {
@@ -474,7 +643,7 @@ function fingerprint_(g) {
 /** [printed, printedAt, printedBy, delivered, deliveredAt, deliveredBy, note, printedRaw, deliveredRaw] */
 function statusOf_(g, t) {
   const p = truthy_(g.printedRaw);
-  const dCol = truthy_(g.deliveredRaw);
+  const dCol = deliveredMark_(g.deliveredRaw);
   const dRem = remarkDelivered_(g.remark);
   const d = dCol || dRem;
   return [
@@ -504,6 +673,14 @@ function truthy_(v) {
   const s = String(v == null ? '' : v).trim();
   if (!s) return false;
   return !/^(no|n|false|0|-|na|n\/a|pending|not printed|not delivered|✗|x)$/i.test(s);
+}
+
+/** The Delivered column counts only for a real date or an explicit yes-word.
+ *  "Paid", "Check" and other notes typed there are NOT a delivery. */
+function deliveredMark_(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return false;
+  return parseDate_(s) > 0 || DELIVERED_MARK.test(s);
 }
 
 function remarkDelivered_(remark) {
@@ -540,7 +717,7 @@ function readSource_() {
   const values = sh.getDataRange().getDisplayValues();
   const head = (values[0] || []).map(function (h) { return clean_(h).toLowerCase(); });
   const idx = {};
-  Object.keys(COL).forEach(function (k) { idx[k] = head.indexOf(COL[k].toLowerCase()); });
+  Object.keys(COL).forEach(function (k) { idx[k] = findCol_(head, k); });
   if (idx.dept < 0 || idx.first < 0) throw new Error(CFG.SOURCE_SHEET + ' header row must contain "Department" and "First Name"');
 
   const guests = [];
@@ -553,6 +730,8 @@ function readSource_() {
       email: get('email'), mobile: get('mobile'), photo: get('photo'), uid: get('uid'), accr: get('accr'),
       remark: get('remark'), printedRaw: get('printed'), deliveredRaw: get('delivered'),
     };
+    g.printedCell = g.printedRaw;       // what the cell really says (printedRaw may be a held / frozen value)
+    g.deliveredCell = g.deliveredRaw;
     if (!g.dept && !g.first && !g.last) continue;
     g.name = (g.first + ' ' + g.last).trim();
     const contact = g.email.toLowerCase() || g.mobile.replace(/\D/g, '').slice(-10) || g.name.toLowerCase();
@@ -562,6 +741,16 @@ function readSource_() {
     guests.push(g);
   }
   return { sheet: sh, guests: guests, idx: idx, values: values };
+}
+
+/** Index of the column for COL[key] in a lower-cased header row (first matching name wins), or -1. */
+function findCol_(head, key) {
+  const names = COL[key];
+  for (let i = 0; i < names.length; i++) {
+    const at = head.indexOf(names[i].toLowerCase());
+    if (at >= 0) return at;
+  }
+  return -1;
 }
 
 function readTrack_() {
@@ -578,11 +767,13 @@ function readTrack_() {
   return { sheet: sh, rows: rows, map: map };
 }
 
-const TRACK_DATE_COLS = [T.pAt, T.dAt, T.firstSeen, T.removed];
+const TRACK_DATE_COLS = [T.pAt, T.dAt, T.firstSeen, T.removed, T.missing];
 
 /** Text columns are forced to plain text first, so "15/11/26" or "00123" are never
- *  turned into dates/numbers by Sheets (which would look like a change on every scan). */
+ *  turned into dates/numbers by Sheets (which would look like a change on every scan).
+ *  The header is rewritten too, so trackers made by older versions get new columns' names. */
 function writeTrack_(tr) {
+  tr.sheet.getRange(1, 1, 1, TRACK_HEAD.length).setValues([TRACK_HEAD]);
   const n = tr.rows.length;
   if (!n) return;
   const fmtRow = TRACK_HEAD.map(function (h, i) { return TRACK_DATE_COLS.indexOf(i) >= 0 ? 'dd-MMM-yy HH:mm' : '@'; });
@@ -644,6 +835,177 @@ function ensureSheet_(ss, name, head) {
     sh.hideSheet();
   }
   return sh;
+}
+
+/* ══════════════════════════ Backups ══════════════════════════ */
+
+const BACKUP_TAB = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?) (.+)$/;
+
+/**
+ * Hourly trigger (installed by setup), or run by hand any time.
+ * Copies Sheet2, _Ops_Track and _Ops_Log into the separate spreadsheet
+ * "IFFI Guest Desk – Backups", one tab per run: "YYYY-MM-DD HH:mm <tab>".
+ * Keeps the last BACKUP_KEEP runs per tab. Optionally also a CSV of Sheet2 in Drive.
+ */
+function backupNow() {
+  const ss = ss_();
+  const now = new Date();
+  const bs = backupBook_();
+  let stamp = Utilities.formatDate(now, CFG.TZ, 'yyyy-MM-dd HH:mm');
+  // A second run in the same minute (e.g. the safety copy before a restore) must not
+  // replace that minute's backup, so it gets seconds too. Names still sort by time.
+  if (bs.getSheetByName(stamp + ' ' + CFG.SOURCE_SHEET)) stamp = Utilities.formatDate(now, CFG.TZ, 'yyyy-MM-dd HH:mm:ss');
+  const sources = [[CFG.SOURCE_SHEET, true], [CFG.TRACK_SHEET, false], [CFG.LOG_SHEET, false]];
+
+  // Read everything under the lock so the three copies match each other.
+  const data = withLock_(function () {
+    return sources.map(function (s) {
+      const sh = ss.getSheetByName(s[0]);
+      if (!sh || sh.getLastRow() < 1) return null;
+      const range = sh.getDataRange();
+      const values = s[1] ? range.getDisplayValues() : range.getValues();
+      return { name: s[0], values: values.map(function (r) { return r.map(text_); }) };
+    }).filter(Boolean);
+  });
+
+  data.forEach(function (d) {
+    const name = stamp + ' ' + d.name;
+    const old = bs.getSheetByName(name);
+    if (old) bs.deleteSheet(old);                 // same second twice: keep the newest
+    const sh = bs.insertSheet(name, bs.getSheets().length);
+    writeGrid_(sh, d.values);
+    pruneBackups_(bs, d.name);
+  });
+  const blank = bs.getSheetByName('Sheet1');       // the empty tab a new spreadsheet starts with
+  if (blank && bs.getSheets().length > 1 && blank.getLastRow() === 0) bs.deleteSheet(blank);
+
+  let csv = '';
+  const sheet2 = data.filter(function (d) { return d.name === CFG.SOURCE_SHEET; })[0];
+  if (CFG.BACKUP_CSV && sheet2) {
+    try { backupCsv_(stamp + ' ' + CFG.SOURCE_SHEET, sheet2.values); csv = ' + CSV in Drive folder "' + CFG.BACKUP_FOLDER + '"'; }
+    catch (e) { csv = ' (CSV copy failed: ' + String((e && e.message) || e) + ')'; }
+  }
+
+  const rows = sheet2 ? sheet2.values.length - 1 : 0;
+  const parts = data.map(function (d) { return d.name + ' ' + Math.max(d.values.length - 1, 0); }).join(', ');
+  withLock_(function () {
+    appendLog_([[now, SYSTEM_ACTOR, 'BACKUP', '', '', rows + ' rows', '',
+      parts + ' → "' + CFG.BACKUP_NAME + '" tabs "' + stamp + ' …"' + csv]]);
+  });
+  return { url: bs.getUrl(), id: bs.getId(), stamp: stamp, tabs: data.map(function (d) { return stamp + ' ' + d.name; }), rows: rows };
+}
+
+/**
+ * Run by hand. Puts one backup tab back into its source tab.
+ *   restoreFromBackup('2026-11-19 10:00 Sheet2')         → dry run: only reports what would change
+ *   restoreFromBackup('2026-11-19 10:00 Sheet2', true)   → writes it back
+ * A fresh backup of the current state is taken before writing, so a restore can be undone.
+ * (In the editor, call it from a small wrapper function, e.g. function doRestore() { restoreFromBackup('…', true); })
+ */
+function restoreFromBackup(tabName, confirm) {
+  const id = PropertiesService.getScriptProperties().getProperty('BACKUP_SS_ID');
+  if (!id) throw new Error('No backups yet — run backupNow() first.');
+  const bs = SpreadsheetApp.openById(id);
+  let name = String(tabName || '').trim();
+  if (!bs.getSheetByName(name) && bs.getSheetByName(name + ' ' + CFG.SOURCE_SHEET)) name += ' ' + CFG.SOURCE_SHEET;
+  const bsh = bs.getSheetByName(name);
+  if (!bsh) throw new Error('No backup tab "' + tabName + '" in "' + CFG.BACKUP_NAME + '". Tab names look like "2026-11-19 10:00 Sheet2".');
+  const m = name.match(BACKUP_TAB);
+  const target = m && m[2];
+  if ([CFG.SOURCE_SHEET, CFG.TRACK_SHEET, CFG.LOG_SHEET].indexOf(target) < 0) throw new Error('"' + name + '" is not a Guest Desk backup tab.');
+  const tsh = ss_().getSheetByName(target);
+  if (!tsh) throw new Error('Sheet "' + target + '" not found');
+
+  const backup = bsh.getLastRow() ? bsh.getDataRange().getDisplayValues() : [];
+  const current = tsh.getLastRow() ? (target === CFG.SOURCE_SHEET ? tsh.getDataRange().getDisplayValues() : tsh.getDataRange().getValues()) : [];
+  const nr = Math.max(backup.length, current.length);
+  const nc = Math.max((backup[0] || []).length, (current[0] || []).length);
+  let differing = 0;
+  for (let r = 0; r < nr; r++) {
+    for (let c = 0; c < nc; c++) {
+      const b = backup[r] && backup[r][c] != null ? String(backup[r][c]) : '';
+      const v = current[r] && current[r][c] != null ? text_(current[r][c]) : '';
+      if (b !== v) differing++;
+    }
+  }
+
+  if (!confirm || !differing) {
+    const msg = (differing ? 'Dry run: ' : '') + differing + ' cell(s) differ between backup "' + name + '" and ' + target + '. Nothing was written.' +
+      (differing ? ' To restore, run restoreFromBackup(\'' + name + '\', true).' : '');
+    Logger.log(msg);
+    return { dryRun: !confirm, differing: differing, written: 0, target: target, message: msg };
+  }
+
+  try { backupNow(); } catch (e) { throw new Error('Could not back up the current state first, so nothing was restored: ' + ((e && e.message) || e)); }
+
+  withLock_(function () {
+    if (backup.length) tsh.getRange(1, 1, backup.length, backup[0].length).setNumberFormat('@').setValues(backup);
+    const bw = backup.length ? backup[0].length : 0;
+    if (current.length > backup.length) tsh.getRange(backup.length + 1, 1, current.length - backup.length, nc).clearContent();
+    if (nc > bw && backup.length) tsh.getRange(1, bw + 1, backup.length, nc - bw).clearContent();
+    if (target === CFG.SOURCE_SHEET) reconcile_({ acceptSheet: true });   // accept the restored sheet as-is, no per-guest noise
+    appendLog_([[new Date(), SYSTEM_ACTOR, 'RESTORED', '', '', differing + ' cells', '',
+      'restoreFromBackup("' + name + '") wrote the backup back into ' + target + '. The state before is in the newest backup.']]);
+    bump_('D');
+    bump_('S');
+  });
+  const msg = 'Restored ' + target + ' from "' + name + '" (' + differing + ' cells changed).';
+  Logger.log(msg);
+  return { dryRun: false, differing: differing, written: differing, target: target, message: msg };
+}
+
+function backupBook_() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('BACKUP_SS_ID');
+  if (id) {
+    try { return SpreadsheetApp.openById(id); } catch (e) { /* deleted or no access: make a new one */ }
+  }
+  const bs = SpreadsheetApp.create(CFG.BACKUP_NAME);
+  props.setProperty('BACKUP_SS_ID', bs.getId());
+  return bs;
+}
+
+/** Writes a 2-D array of text into a fresh tab, sized exactly (a new tab's spare cells
+ *  count toward the spreadsheet's 10-million-cell limit). */
+function writeGrid_(sh, values) {
+  const nr = Math.max(values.length, 1);
+  const nc = Math.max(values.reduce(function (m, r) { return Math.max(m, r.length); }, 0), 1);
+  const grid = values.length ? values.map(function (r) { while (r.length < nc) r.push(''); return r; }) : [['']];
+  if (sh.getMaxRows() < nr) sh.insertRowsAfter(sh.getMaxRows(), nr - sh.getMaxRows());
+  if (sh.getMaxColumns() < nc) sh.insertColumnsAfter(sh.getMaxColumns(), nc - sh.getMaxColumns());
+  sh.getRange(1, 1, nr, nc).setNumberFormat('@').setValues(grid);
+  if (sh.getMaxRows() > nr) sh.deleteRows(nr + 1, sh.getMaxRows() - nr);
+  if (sh.getMaxColumns() > nc) sh.deleteColumns(nc + 1, sh.getMaxColumns() - nc);
+}
+
+function pruneBackups_(bs, source) {
+  bs.getSheets()
+    .filter(function (s) { const m = s.getName().match(BACKUP_TAB); return m && m[2] === source; })
+    .sort(function (a, b) { return a.getName() < b.getName() ? 1 : -1; })   // newest first
+    .slice(CFG.BACKUP_KEEP)
+    .forEach(function (s) { bs.deleteSheet(s); });
+}
+
+function backupCsv_(name, values) {
+  const it = DriveApp.getFoldersByName(CFG.BACKUP_FOLDER);
+  const folder = it.hasNext() ? it.next() : DriveApp.createFolder(CFG.BACKUP_FOLDER);
+  const csv = values.map(function (r) {
+    return r.map(function (v) { const s = String(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(',');
+  }).join('\r\n');
+  folder.createFile(name + '.csv', csv, MimeType.CSV);
+  const files = [];
+  const fi = folder.getFiles();
+  while (fi.hasNext()) files.push(fi.next());
+  files.filter(function (f) { return /\.csv$/i.test(f.getName()); })
+    .sort(function (a, b) { return b.getDateCreated().getTime() - a.getDateCreated().getTime(); })
+    .slice(CFG.BACKUP_KEEP)
+    .forEach(function (f) { f.setTrashed(true); });
+}
+
+/** Plain text for a backup cell (dates as ISO, so they read back exactly). */
+function text_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? '' : v.toISOString();
+  return v == null ? '' : String(v);
 }
 
 /* ══════════════════════════ Helpers ══════════════════════════ */

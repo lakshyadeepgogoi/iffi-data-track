@@ -7,6 +7,10 @@ import { Spinner } from './ui.jsx';
 const KINDS = [['all', 'Everything'], ['desk', 'Desk actions'], ['sheet', 'Sheet2 changes']];
 
 const ICONS = [
+  [/^COLUMN MISSING$/, '!', 'bg-bad'],
+  [/^WIPE LOOP$/, '!', 'bg-bad'],
+  [/^RESYNCED$/, '⟳', 'bg-pri'],
+  [/^BACKUP$/, '⛁', 'bg-noid'],
   [/^UNDO/, '↺', 'bg-noid'],
   [/DELIVER/, '✓', 'bg-del'],
   [/PRINT/, 'P', 'bg-pri'],
@@ -27,6 +31,7 @@ const sentence = (action) =>
     PRINTED: 'marked printed', DELIVERED: 'handed over', 'UNDO PRINTED': 'undid printed', 'UNDO DELIVERED': 'undid delivery',
     'NEW GUEST': 'new registration', 'ID ASSIGNED': 'User ID assigned to', UPDATED: 'details changed for', REMOVED: 'row removed for',
     'BACK IN SHEET': 'row back for', NOTE: 'noted on', EXPORT: 'exported', RESTORED: 'restored', 'TRACKING STARTED': 'started tracking',
+    'COLUMN MISSING': 'can’t find the', RESYNCED: 're-read Sheet2:', 'WIPE LOOP': 'stopped a wipe loop:', BACKUP: 'backed up',
   })[action] || action.toLowerCase();
 
 export default function Activity({ onOpen }) {
@@ -44,8 +49,8 @@ export default function Activity({ onOpen }) {
   }, [api, statusTick, kind]);
 
   return (
-    <section>
-      <div className="mb-2.5 flex rounded-xl bg-[#e9e3da] p-[3px]">
+    <section className="lg:mx-auto lg:max-w-4xl">
+      <div className="mb-2.5 flex rounded-xl bg-[#e9e3da] p-[3px] lg:max-w-md">
         {KINDS.map(([k, t]) => (
           <button
             key={k}

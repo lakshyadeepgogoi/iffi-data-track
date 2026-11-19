@@ -27,7 +27,7 @@ function addGuest(dept, firstSeen = 0) {
   const uid = R(10) < 9 ? String(4000 + n * 37) : '';
   const email = `${f}.${l}${n}@example.com`.toLowerCase();
   const g = [`${dept}|${email}`, n + 1, dept, f, l, DESIG[R(6)], email, '98' + String(10000000 + R(89999999)),
-    R(12) ? 'demo' + n : '', uid, CARDS[R(CARDS.length)], '', firstSeen];
+    R(12) ? 'demo' + n : '', uid, CARDS[R(CARDS.length)], '', firstSeen, '', ''];  // … printedCell, deliveredCell
   guests.push(g);
   return g;
 }
@@ -37,6 +37,7 @@ const dup = [...guests[3]]; dup[0] += '#2'; dup[1] = 999; guests.push(dup);
 guests.slice(0, 70).forEach((g, k) => {
   if (!g[9]) return;
   status[g[0]] = [1, 0, '', k % 3 ? 0 : 1, 0, '', '', '15/11/26', k % 3 ? '' : 'Remark: Deleverd'];
+  g[13] = '15/11/26'; // printedCell, as Sheet2 would show it
 });
 log.push([Date.now() - 3_600_000, 'System', 'TRACKING STARTED', '', '', `${guests.length} guests`, '', 'Watching Sheet2']);
 
@@ -85,9 +86,9 @@ const isSheet = (r) => r[1] === 'Sheet2' || r[1] === 'System';
 export const mock = {
   apiLogin: (a) =>
     a.pin !== '2026' ? Promise.reject(new Error('AUTH: Wrong PIN (demo PIN is 2026)')) : reply({ ok: true, name: a.name }),
-  apiSnapshot: () => { startSimulation(); return reply({ guests, status, v: ver() }); },
+  apiSnapshot: () => { startSimulation(); return reply({ guests, status, v: ver(), warnings: [] }); },
   apiVersion: () => reply(ver(), 80),
-  apiStatus: () => reply({ status, v: ver() }),
+  apiStatus: () => reply({ status, v: ver(), warnings: [] }),
   apiSet: (a, keys, field, val) => reply({ changed: set(a.name, keys, field, val), v: ver() }),
   apiNote: (a, k, note) => {
     status[k] = (status[k] || [0, 0, '', 0, 0, '', '', '', '']).slice();
